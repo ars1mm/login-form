@@ -1,5 +1,10 @@
 # Basic Login System
 
+Built with:
+- Backend: C with OpenSSL and Mongoose
+- Frontend: HTML, JavaScript, and TailwindCSS
+- Storage: JSON file-based
+
 ⚠️ **WARNING: This is a demonstration project only!** 
 This implementation is not secure enough for production use. It lacks several critical security features like:
 - Password salting
