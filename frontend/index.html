@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login Form</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-gray-100 flex items-center justify-center">
+    <div class="bg-white p-8 rounded-lg shadow-md w-96">
+        <div class="flex justify-between mb-6">
+            <button id="loginTab" class="text-lg font-semibold text-blue-500">Login</button>
+            <button id="signupTab" class="text-lg font-semibold text-gray-500">Sign Up</button>
+        </div>
+
+        <div id="errorMessage" class="mb-4 text-red-500 text-sm hidden"></div>
+        
+        <form id="loginForm" class="space-y-4">
+            <input
+                type="text"
+                id="username"
+                placeholder="Username"
+                class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+            />
+            
+            <input
+                type="password"
+                id="password"
+                placeholder="Password"
+                class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+            />
+            
+            <button
+                type="submit"
+                class="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 transition-colors"
+            >
+                Login
+            </button>
+        </form>
+
+        <form id="signupForm" class="space-y-4 hidden">
+            <input
+                type="text"
+                id="signupUsername"
+                placeholder="Username"
+                class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+            />
+            <input
+                type="password"
+                id="signupPassword"
+                placeholder="Password"
+                class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+            />
+            <button
+                type="submit"
+                class="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 transition-colors"
+            >
+                Sign Up
+            </button>
+        </form>
+    </div>
+
+    <script>
+        const loginTab = document.getElementById('loginTab');
+        const signupTab = document.getElementById('signupTab');
+        const loginForm = document.getElementById('loginForm');
+        const signupForm = document.getElementById('signupForm');
+        const errorDiv = document.getElementById('errorMessage');
+
+        loginTab.addEventListener('click', () => {
+            loginForm.classList.remove('hidden');
+            signupForm.classList.add('hidden');
+            loginTab.classList.add('text-blue-500');
+            loginTab.classList.remove('text-gray-500');
+            signupTab.classList.add('text-gray-500');
+            signupTab.classList.remove('text-blue-500');
+            errorDiv.classList.add('hidden');
+        });
+
+        signupTab.addEventListener('click', () => {
+            signupForm.classList.remove('hidden');
+            loginForm.classList.add('hidden');
+            signupTab.classList.add('text-blue-500');
+            signupTab.classList.remove('text-gray-500');
+            loginTab.classList.add('text-gray-500');
+            loginTab.classList.remove('text-blue-500');
+            errorDiv.classList.add('hidden');
+        });
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            try {
+                const response = await fetch('http://localhost:8080/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    errorDiv.classList.add('hidden');
+                    document.body.innerHTML = '<div class="text-2xl font-bold text-green-600">Welcome!</div>';
+                } else {
+                    errorDiv.textContent = 'Invalid credentials';
+                    errorDiv.classList.remove('hidden');
+                }
+            } catch (err) {
+                errorDiv.textContent = 'Server error';
+                errorDiv.classList.remove('hidden');
+            }
+        });
+
+        signupForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('signupUsername').value;
+            const password = document.getElementById('signupPassword').value;
+
+            try {
+                const response = await fetch('http://localhost:8080/signup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    errorDiv.textContent = 'Signup successful! Please login.';
+                    errorDiv.classList.remove('text-red-500');
+                    errorDiv.classList.add('text-green-500');
+                    errorDiv.classList.remove('hidden');
+                    loginTab.click();
+                } else {
+                    errorDiv.textContent = data.message || 'Signup failed';
+                    errorDiv.classList.add('text-red-500');
+                    errorDiv.classList.remove('text-green-500');
+                    errorDiv.classList.remove('hidden');
+                }
+            } catch (err) {
+                errorDiv.textContent = 'Server error';
+                errorDiv.classList.add('text-red-500');
+                errorDiv.classList.remove('hidden');
+            }
+        });
+    </script>
+</body>
+</html>
