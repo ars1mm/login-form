@@ -88,12 +88,16 @@ static void load_users_from_file(void) {
 }
 
 static int add_user(const char *username, const char *password) {
-    //Check if the user count is at the maximum, if so return 0
-    if (user_count >= MAX_USERS) return 0;
+    if (user_count >= MAX_USERS) {
+        printf("Error: Storage full!\n");
+        return 0;
+    }
     
-    //Check if the username already exists, if so return 0
     for (int i = 0; i < user_count; i++) {
-        if (strcmp(users[i].username, username) == 0) return 0;
+        if (strcmp(users[i].username, username) == 0) {
+            printf("Error: Username already exists!\n");
+            return 0;
+        }
     }
     
     generate_salt(users[user_count].salt);
@@ -107,8 +111,10 @@ static int add_user(const char *username, const char *password) {
     time_t now = time(NULL);
     struct tm *t = localtime(&now);
     char created_at[22];
-    strftime(created_at, sizeof(created_at) - 1, "%Y-%m-%d %H:%M:%S", t);
-    printf("[New User Created] Username: %s [Created At]: %s [Hash]: %s\n", username, created_at, hashed_password);
+    strftime(created_at, sizeof(created_at), "%Y-%m-%d %H:%M:%S", t);
+    printf("[New User Created] Username: %s [Created At]: %s [Hash]: %s\n", 
+           username, created_at, hashed_password);
+    
     save_users_to_file();
     return 1;
 }
