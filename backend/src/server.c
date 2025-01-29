@@ -2,228 +2,190 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <openssl/sha.h>
-#include <openssl/evp.h>
-#include <openssl/rand.h>
 #include "mongoose.h"
 #include "server.h"
+#include "rate_limit.h"
+#include "user.h"
+#include "utils.h"
+#include "session.h"
 
-#define MAX_USERS 100
-#define MAX_USERNAME_LEN 64
-#define MAX_PASSWORD_LEN 128
-#define SALT_LEN 32
-#define HASH_LEN 32
-
-struct User {
-    char username[MAX_USERNAME_LEN];
-    char password[MAX_PASSWORD_LEN];
-    unsigned char salt[SALT_LEN];
-};
-
-static struct User users[MAX_USERS];
-static int user_count = 0;
-
-static void generate_salt(unsigned char *salt) {
-    RAND_bytes(salt, SALT_LEN);
-}
-
-static void hash_password(const char *password, const unsigned char *salt, char *hashed, size_t hashed_size) {
-    unsigned char hash[EVP_MAX_MD_SIZE];
-    unsigned int hash_len;
-    EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
-    const EVP_MD *md = EVP_sha256();
-
-    EVP_DigestInit_ex(mdctx, md, NULL);
-    EVP_DigestUpdate(mdctx, salt, SALT_LEN);
-    EVP_DigestUpdate(mdctx, password, strlen(password));
-    EVP_DigestFinal_ex(mdctx, hash, &hash_len);
-    EVP_MD_CTX_free(mdctx);
-
-    memset(hashed, 0, hashed_size);
-    for (unsigned int i = 0; i < hash_len; i++) {
-        snprintf(hashed + (i * 2), 3, "%02x", hash[i]);
+static void fn(struct mg_connection *c, int ev, void *ev_data) {
+    char ip[46] = {0};
+    
+    if (c != NULL) {
+        mg_ntoa(&c->rem, ip, sizeof(ip));
     }
-}
 
-static void save_users_to_file(void) {
-    FILE *fp = fopen("users.json", "w");
-    if (fp == NULL) return;
-    
-    fprintf(fp, "{\n  \"users\": [\n");
-    for (int i = 0; i < user_count; i++) {
-        char salt_hex[SALT_LEN * 2 + 1] = {0};
-        for (int j = 0; j < SALT_LEN; j++) {
-            snprintf(salt_hex + (j * 2), 3, "%02x", users[i].salt[j]);
-        }
-        fprintf(fp, "    {\"username\": \"%s\", \"password\": \"%s\", \"salt\": \"%s\"}%s\n",
-                users[i].username, users[i].password, salt_hex,
-                i < user_count - 1 ? "," : "");
-    }
-    fprintf(fp, "  ]\n}\n");
-    fclose(fp);
-}
-
-static void load_users_from_file(void) {
-    FILE *fp = fopen("users.json", "r");
-    if (fp == NULL) return;
-    
-    char line[512];
-    char username[MAX_USERNAME_LEN], password[MAX_PASSWORD_LEN], salt_hex[SALT_LEN * 2 + 1];
-    user_count = 0;
-    
-    while (fgets(line, sizeof(line), fp) && user_count < MAX_USERS) {
-        if (sscanf(line, "    {\"username\": \"%63[^\"]\", \"password\": \"%127[^\"]\", \"salt\": \"%32[^\"]\"}", 
-                   username, password, salt_hex) == 3) {
-            strncpy(users[user_count].username, username, MAX_USERNAME_LEN - 1);
-            strncpy(users[user_count].password, password, MAX_PASSWORD_LEN - 1);
-            
-            // Convert salt from hex to bytes
-            for (int i = 0; i < SALT_LEN; i++) {
-                sscanf(salt_hex + (i * 2), "%2hhx", &users[user_count].salt[i]);
+    switch (ev) {
+        case MG_EV_HTTP_MSG: {
+            struct mg_http_message *hm = (struct mg_http_message *) ev_data;
+            if (hm == NULL || ev_data == NULL) {
+                printf("[%ld] Warning: Null HTTP message received from %s\n", (long)time(NULL), ip);
+                return;
             }
-            user_count++;
-        }
-    }
-    fclose(fp);
-}
 
-static int add_user(const char *username, const char *password) {
-    if (user_count >= MAX_USERS) {
-        printf("Error: Storage full!\n");
-        return 0;
-    }
-    
-    for (int i = 0; i < user_count; i++) {
-        if (strcmp(users[i].username, username) == 0) {
-            printf("Error: Username already exists!\n");
-            return 0;
-        }
-    }
-    
-    generate_salt(users[user_count].salt);
-    char hashed_password[65] = {0};
-    hash_password(password, users[user_count].salt, hashed_password, sizeof(hashed_password));
-    
-    strncpy(users[user_count].username, username, MAX_USERNAME_LEN - 1);
-    strncpy(users[user_count].password, hashed_password, MAX_PASSWORD_LEN - 1);
-    user_count++;
-    
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    char created_at[22];
-    strftime(created_at, sizeof(created_at), "%Y-%m-%d %H:%M:%S", t);
-    printf("[New User Created] Username: %s [Created At]: %s [Hash]: %s\n", 
-           username, created_at, hashed_password);
-    
-    save_users_to_file();
-    return 1;
-}
+            // Handle OPTIONS requests first
+            if (mg_strcmp(hm->uri, mg_str("/signup")) == 0 || 
+                mg_strcmp(hm->uri, mg_str("/login")) == 0 || 
+                mg_strcmp(hm->uri, mg_str("/admin/users")) == 0 || 
+                mg_strcmp(hm->uri, mg_str("/admin/promote")) == 0) {
+                
+                if (mg_strcmp(hm->method, mg_str("OPTIONS")) == 0) {
+                    mg_http_reply(c, 200,
+                        "Content-Type: application/json\r\n"
+                        "Access-Control-Allow-Origin: *\r\n"
+                        "Access-Control-Allow-Methods: POST, OPTIONS\r\n"
+                        "Access-Control-Allow-Headers: Content-Type\r\n", 
+                        "");
+                    return;
+                }
 
-static int check_auth(const char *username, const char *password) {
-    for (int i = 0; i < user_count; i++) {
-        if (strcmp(users[i].username, username) == 0) {
-            char hashed_password[65] = {0};
-            hash_password(password, users[i].salt, hashed_password, sizeof(hashed_password));
-            if (strcmp(users[i].password, hashed_password) == 0) {
-                return 1;
+                // Verify we have a POST request with valid JSON
+                if (mg_strcmp(hm->method, mg_str("POST")) != 0) {
+                    mg_http_reply(c, 405,
+                        "Content-Type: application/json\r\n"
+                        "Access-Control-Allow-Origin: *\r\n",
+                        "{\"success\": false, \"message\": \"Method not allowed\"}\n");
+                    return;
+                }
+
+                if (hm->body.len == 0) {
+                    mg_http_reply(c, 400,
+                        "Content-Type: application/json\r\n"
+                        "Access-Control-Allow-Origin: *\r\n",
+                        "{\"success\": false, \"message\": \"Empty request body\"}\n");
+                    return;
+                }
+            }
+
+            // Now handle each endpoint
+            if (mg_strcmp(hm->uri, mg_str("/signup")) == 0) {
+                char username[64], password[64];
+                struct mg_str json = hm->body;
+                
+                char *user = mg_json_get_str(json, "$.username");
+                char *pass = mg_json_get_str(json, "$.password");
+                
+                if (user && pass) {
+                    strncpy(username, user, sizeof(username) - 1);
+                    strncpy(password, pass, sizeof(password) - 1);
+                    free(user);
+                    free(pass);
+                    
+                    int success = add_user(username, password);
+                    record_attempt(ip, success);
+                    
+                    mg_http_reply(c, success ? 200 : 400,
+                        "Content-Type: application/json\r\n"
+                        "Access-Control-Allow-Origin: *\r\n",
+                        "{\"success\": %s, \"message\": \"%s\"}\n",
+                        success ? "true" : "false",
+                        success ? "User created" : "Username already exists or storage full");
+                } else {
+                    mg_http_reply(c, 400,
+                        "Content-Type: application/json\r\n"
+                        "Access-Control-Allow-Origin: *\r\n",
+                        "{\"success\": false, \"message\": \"Invalid JSON format\"}\n");
+                }
+            }
+            else if (mg_strcmp(hm->uri, mg_str("/login")) == 0) {
+                print_rate_limit_status(ip); // Add debug output
+                if (!check_rate_limit(ip)) {
+                    mg_http_reply(c, 429,
+                        "Content-Type: application/json\r\n"
+                        "Access-Control-Allow-Origin: *\r\n",
+                        "{\"success\": false, \"message\": \"Too many attempts. Please try again later.\"}\n");
+                    return;
+                }
+
+                char username[64], password[64];
+                struct mg_str json = hm->body;
+                
+                char *user = mg_json_get_str(json, "$.username");
+                char *pass = mg_json_get_str(json, "$.password");
+                
+                if (user && pass) {
+                    strncpy(username, user, sizeof(username) - 1);
+                    strncpy(password, pass, sizeof(password) - 1);
+                    free(user);
+                    free(pass);
+                    
+                    int auth_result = check_auth(username, password);
+                    record_attempt(ip, auth_result > 0);
+                    
+                    if (auth_result > 0) {
+                        char* session_token = create_session(username, auth_result == 2);
+                        if (session_token) {
+                            mg_http_reply(c, 200,
+                                "Content-Type: application/json\r\n"
+                                "Access-Control-Allow-Origin: *\r\n",
+                                "{\"success\": true, \"is_admin\": %s, \"token\": \"%s\"}\n",
+                                auth_result == 2 ? "true" : "false",
+                                session_token);
+                        } else {
+                            mg_http_reply(c, 500,
+                                "Content-Type: application/json\r\n"
+                                "Access-Control-Allow-Origin: *\r\n",
+                                "{\"success\": false, \"message\": \"Session creation failed\"}\n");
+                        }
+                    } else {
+                        mg_http_reply(c, 401,
+                            "Content-Type: application/json\r\n"
+                            "Access-Control-Allow-Origin: *\r\n",
+                            "{\"success\": false, \"message\": \"Invalid credentials\"}\n");
+                    }
+                }
+            }
+            else if (mg_strcmp(hm->uri, mg_str("/logout")) == 0) {
+                struct mg_str *token_header = mg_http_get_header(hm, "X-Session-Token");
+                if (token_header) {
+                    char token[SESSION_TOKEN_LEN + 1] = {0};
+                    snprintf(token, sizeof(token), "%.*s", (int)token_header->len, token_header->ptr);
+                    remove_session(token);
+                    mg_http_reply(c, 200,
+                        "Content-Type: application/json\r\n"
+                        "Access-Control-Allow-Origin: *\r\n",
+                        "{\"success\": true}\n");
+                } else {
+                    mg_http_reply(c, 400,
+                        "Content-Type: application/json\r\n"
+                        "Access-Control-Allow-Origin: *\r\n",
+                        "{\"success\": false, \"message\": \"No session token provided\"}\n");
+                }
             }
             break;
         }
     }
-    return 0;
 }
 
-static void fn(struct mg_connection *c, int ev, void *ev_data) {
-    if (ev == MG_EV_HTTP_MSG) {
-        struct mg_http_message *hm = (struct mg_http_message *) ev_data;
-
-        if (mg_strcmp(hm->method, mg_str("OPTIONS")) == 0) {
-            mg_http_reply(c, 200,
-                "Content-Type: application/json\r\n"
-                "Access-Control-Allow-Origin: *\r\n"
-                "Access-Control-Allow-Methods: POST, OPTIONS\r\n"
-                "Access-Control-Allow-Headers: Content-Type\r\n", "");
-            return;
-        }
-
-        if (mg_strcmp(hm->uri, mg_str("/signup")) == 0) {
-            char username[64], password[64];
-            struct mg_str json = hm->body;
-            
-            char *user = mg_json_get_str(json, "$.username");
-            char *pass = mg_json_get_str(json, "$.password");
-            
-            if (user && pass) {
-                strncpy(username, user, sizeof(username) - 1);
-                strncpy(password, pass, sizeof(password) - 1);
-                free(user);
-                free(pass);
-                
-                int success = add_user(username, password);
-                
-                mg_http_reply(c, success ? 200 : 400,
-                    "Content-Type: application/json\r\n"
-                    "Access-Control-Allow-Origin: *\r\n",
-                    "{\"success\": %s, \"message\": \"%s\"}\n",
-                    success ? "true" : "false",
-                    success ? "User created" : "Username already exists or storage full");
-            } else {
-                mg_http_reply(c, 400,
-                    "Content-Type: application/json\r\n"
-                    "Access-Control-Allow-Origin: *\r\n",
-                    "{\"success\": false, \"message\": \"Invalid JSON format\"}\n");
-            }
-            return;
-        }
-
-        if (mg_strcmp(hm->uri, mg_str("/login")) == 0) {
-            char username[64], password[64];
-            struct mg_str json = hm->body;
-            
-            char *user = mg_json_get_str(json, "$.username");
-            char *pass = mg_json_get_str(json, "$.password");
-            
-            if (user && pass) {
-                strncpy(username, user, sizeof(username) - 1);
-                strncpy(password, pass, sizeof(password) - 1);
-                free(user);
-                free(pass);
-                
-                int auth_success = check_auth(username, password);
-                
-                mg_http_reply(c, auth_success ? 200 : 401,
-                    "Content-Type: application/json\r\n"
-                    "Access-Control-Allow-Origin: *\r\n",
-                    "{\"success\": %s}\n",
-                    auth_success ? "true" : "false");
-            } else {
-                mg_http_reply(c, 400,
-                    "Content-Type: application/json\r\n"
-                    "Access-Control-Allow-Origin: *\r\n",
-                    "{\"success\": false, \"message\": \"Invalid JSON format\"}\n");
-            }
-            return;
-        }
-
-        mg_http_reply(c, 404,
-            "Content-Type: application/json\r\n"
-            "Access-Control-Allow-Origin: *\r\n",
-            "{\"success\": false, \"error\": \"Not found\"}\n");
-    }
-}
+static struct mg_mgr mgr;
 
 void setup_server(const char *url) {
     load_users_from_file();
-    printf("Loaded %d users from storage\n", user_count);
-    printf("Server starting on %s\n", url);
+    init_rate_limiter();
+    init_session_manager();  // Initialize session management
+    printf("[%ld] Loaded users from storage\n", (long)time(NULL));
+    printf("[%ld] Server starting on %s\n", (long)time(NULL), url);
+    fflush(stdout);
 
-    struct mg_mgr mgr;
     mg_mgr_init(&mgr);
-
     struct mg_connection *c = mg_http_listen(&mgr, url, fn, NULL);
-    if (c == NULL) return;
-
-    while (1) mg_mgr_poll(&mgr, 1000);
     
+    if (c == NULL) {
+        printf("[%ld] Failed to start server on %s\n", (long)time(NULL), url);
+        fflush(stdout);
+        mg_mgr_free(&mgr);
+        return;
+    }
+    
+    printf("[%ld] Server successfully started\n", (long)time(NULL));
+    fflush(stdout);
+
+    while (1) {
+        mg_mgr_poll(&mgr, 1000);
+    }
+}
+
+void stop_server() {
     mg_mgr_free(&mgr);
 }

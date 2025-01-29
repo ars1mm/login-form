@@ -7,8 +7,6 @@ Built with:
 
 ⚠️ **WARNING: This is a demonstration project only!** 
 This implementation is not secure enough for production use. It lacks several critical security features like:
-- Password salting
-- Rate limiting
 - Session management
 - SQL injection protection
 - XSS protection
