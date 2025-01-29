@@ -45,3 +45,14 @@ users.json
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Next.js specific
+/frontend/.next/
+/frontend/node_modules/
+/frontend/.env*.local
+/frontend/npm-debug.log*
+/frontend/yarn-debug.log*
+/frontend/yarn-error.log*
+/frontend/.pnpm-debug.log*
+/frontend/build
+/frontend/out

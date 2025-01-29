@@ -2,7 +2,7 @@
 
 Built with:
 - Backend: C with OpenSSL and Mongoose
-- Frontend: HTML, JavaScript, and TailwindCSS
+- Frontend: Next.js, TypeScript, and TailwindCSS
 - Storage: JSON file-based
 
 ⚠️ **WARNING: This is a demonstration project only!** 
@@ -21,8 +21,9 @@ This implementation is not secure enough for production use. It lacks several cr
 - Make
 
 ### Frontend
-- Modern web browser
-- Python3 (for development server)
+- Node.js 18+ 
+- npm or yarn
+- WSL (if using Windows)
 
 ## Installation
 
@@ -43,13 +44,15 @@ make clean && make
 ./server
 ```
 
-4. Start the frontend (in a new terminal):
+3. Install and run the frontend (in WSL if using Windows):
 ```bash
+# Open WSL terminal first, then:
 cd frontend
-python3 -m http.server 3000
+npm install
+npm run dev
 ```
 
-5. Access the application:
+4. Access the application:
 ```
 http://localhost:3000
 ```
@@ -69,7 +72,14 @@ fullstack-login/
 │   ├── Makefile
 │   └── users.json
 └── frontend/
-    └── index.html
+    ├── src/
+    │   ├── app/
+    │   │   ├── page.tsx
+    │   │   └── layout.tsx
+    │   └── components/
+    ├── public/
+    ├── package.json
+    └── next.config.js
 ```
 
 ## Features
